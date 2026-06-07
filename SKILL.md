@@ -29,8 +29,9 @@ Use this skill when the user wants to:
 4. For Solana wallets, open `https://jup.ag/portfolio/<address>` and collect visible Jupiter Portfolio data.
 5. Extract the top summary first: total/net worth, chain/wallet split, top tokens, protocol positions, staked/claimable amounts, and visible PnL/change signals.
 6. Do not replace Jupiter Portfolio with a native-SOL-only RPC fallback in automated reports. That hides DeFi/staked/claimable positions and creates false confidence.
-7. Return a compact, actionable review: facts, issues, candidate actions, missing information, and 1–2 decisions for the next review cycle.
-8. For recurring jobs, store only privacy-safe state: hashes, timestamps, and decision metadata. Do not store raw wallet addresses, balances, token amounts, percentages, holdings, or page text.
+7. Reconcile rows before trusting totals: protocol rows and their wallet-token wrappers must not both be counted; liabilities subtract from value; stale or disputed rows stay audit-only.
+8. Return a compact, actionable review: facts, issues, candidate actions, missing information, and 1–2 decisions for the next review cycle.
+9. For recurring jobs, store only privacy-safe state: hashes, timestamps, and decision metadata. Do not store raw wallet addresses, balances, token amounts, percentages, holdings, or page text.
 
 ## Local Configuration
 
@@ -49,12 +50,17 @@ sol_example=11111111111111111111111111111111
 
 `addresses.conf`, state files, logs, and debug outputs are intentionally ignored by git.
 
+## Source contracts
+
+Use [`references/source-contracts-and-reconciliation.md`](references/source-contracts-and-reconciliation.md) when changing collectors or report logic. It defines source precedence, row contracts, stale/degraded reporting, correction-registry shape, and accounting invariants.
+
 ## Scripts
 
 Primary public script:
 
 ```bash
 python3 scripts/chro-informer.py --dry-run --pretty
+python3 scripts/validate-public-export.py
 ```
 
 If your environment uses a wrapper script, keep it outside the repository or document it without private paths.
@@ -65,10 +71,13 @@ If your environment uses a wrapper script, keep it outside the repository or doc
 - Jupiter can show human-verification, marketing/login text, or an empty DOM in some browser profiles.
 - A native Solana RPC balance is not equivalent to Jupiter Portfolio coverage.
 - Do not publish live wallet addresses, state files, or debug dumps.
+- Do not let a stale or disputed source row enter a clean total; mark it degraded/audit-only until reconciled.
 
 ## Verification
 
 - Run the script in dry-run mode against example or explicitly provided addresses.
 - Confirm no raw wallet addresses/balances are written to state.
 - Confirm the report includes source-specific sections for EVM/DeBank and Solana/Jupiter when both are configured.
+- Confirm row accounting reconciles and stale/disputed rows are labeled degraded or audit-only.
+- Run `python3 scripts/validate-public-export.py` before publishing.
 - Run a static security scan before publishing.

@@ -12,6 +12,7 @@ Do not commit local runtime files such as `.env`, `state.json`, `config.json`, `
 
 ## Verification before publishing
 
+- Run `python3 scripts/validate-public-export.py`.
 - Run a static skill security scan.
 - Run a secret/private-marker scan.
 - Run syntax checks for scripts, if any.

@@ -877,10 +877,13 @@ def build_message(items: list[dict[str, Any]], reason: str) -> str:
         assessment = "недостаточно данных: страницы открылись, но net worth не извлечён"
     elif concentration >= 0.75:
         assessment = "есть сильная концентрация в одном кошельке/сегменте; это не обязательно плохо, но требует осознанного тезиса"
+    elif concentration >= 0.60:
+        assessment = "есть заметная концентрация в одном кошельке/сегменте; это нормально только если так и задумано стратегией"
     else:
         assessment = "по распределению между читаемыми кошельками выглядит без критического перекоса"
     lines.extend([
         f"Оценка: {assessment}.",
+        "Учёт: browser-visible DeBank/Jupiter остаются основой; RPC/native fallback не подменяет DeFi/staked/claimable данные, спорные строки надо держать audit-only.",
         f"Конкретные действия по всем {wallet_word}:",
     ])
     lines.extend(generate_action_recommendations(items, totals, known_total))
