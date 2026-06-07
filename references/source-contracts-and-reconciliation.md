@@ -4,9 +4,11 @@ Use this when maintaining the portfolio-review skill, parser, or informer. The g
 
 ## Source hierarchy
 
+For this public skill today, DeBank/Jupiter browser-visible pages remain the canonical portfolio coverage path unless a direct adapter is explicitly implemented and verified to cover the same DeFi, staked, claimable, liabilities, and protocol rows. Native balance/RPC reads are never a full substitute for Jupiter/DeBank portfolio coverage.
+
 Prefer sources in this order:
 
-1. **Direct exchange / protocol / chain reads** for venues where the portfolio logic has a reliable adapter.
+1. **Direct exchange / protocol / chain reads** only for venues where the portfolio logic has a reliable adapter with equivalent coverage.
 2. **Fresh browser-visible portfolio pages** such as DeBank for EVM and Jupiter Portfolio for Solana.
 3. **Explorer or RPC identity checks** for token names, contracts, staking wrappers, and disputed rows.
 4. **Last-good snapshot** only as degraded fallback, never as a clean current report.
