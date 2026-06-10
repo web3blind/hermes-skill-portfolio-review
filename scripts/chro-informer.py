@@ -275,7 +275,9 @@ def clean_lines(text: str) -> list[str]:
         line = re.sub(r"\s+", " ", raw).strip()
         # Camofox snapshots are accessibility-tree lines. Keep the human text and
         # drop roles/refs/URLs/addresses so notifications stay useful and private.
-        line = re.sub(r"^-\s*", "", line)
+        # Drop accessibility-tree/list bullets, but do not turn negative money
+        # values like "-$44.99" into positive values.
+        line = re.sub(r"^-\s+", "", line)
         if line.startswith("/url:") or line.startswith("- /url:"):
             continue
         m = re.match(r'^(?:heading|paragraph|text|button|link)\s+"([^"]+)"(?:\s+\[[^\]]+\])?:?$', line)
@@ -366,15 +368,17 @@ def source_fingerprint(items: list[dict[str, Any]]) -> str:
 
 
 def is_money(line: str) -> bool:
-    return bool(re.fullmatch(r"<?\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?", line.strip(), re.I))
+    return bool(re.fullmatch(r"[-+]?<?\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?", line.strip(), re.I))
 
 
 def money_value(line: str) -> float:
-    m = re.search(r"\$([0-9][0-9,]*(?:\.[0-9]+)?)([KMB]?)", line, re.I)
+    m = re.search(r"([-+]?)<?\$([0-9][0-9,]*(?:\.[0-9]+)?)([KMB]?)", line, re.I)
     if not m:
         return 0.0
-    value = float(m.group(1).replace(',', ''))
-    mult = {'K': 1_000, 'M': 1_000_000, 'B': 1_000_000_000}.get(m.group(2).upper(), 1)
+    value = float(m.group(2).replace(',', ''))
+    if m.group(1) == '-':
+        value = -value
+    mult = {'K': 1_000, 'M': 1_000_000, 'B': 1_000_000_000}.get(m.group(3).upper(), 1)
     return value * mult
 
 
@@ -387,7 +391,7 @@ def format_usd(value: float) -> str:
 
 
 def first_money_and_change(line: str) -> tuple[str | None, str | None]:
-    money = re.search(r"\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?", line, re.I)
+    money = re.search(r"[-+]?<?\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?", line, re.I)
     pct = PCT_RE.search(line)
     return (money.group(0) if money else None, pct.group(0) if pct else None)
 
@@ -474,9 +478,11 @@ def summarize_debank_item(text: str) -> dict[str, Any]:
             name = None
             for prev in reversed(lines[max(0, i - 4):i]):
                 if not is_money(prev) and not prev.startswith('img') and len(prev) <= 40 and prev not in {'link :'}:
-                    name = prev
+                    # DeBank can merge the previous position value into the next protocol name:
+                    # "$216.87 Hyperliquid". Keep only the protocol name for display.
+                    name = re.sub(r"^[-+]?<?\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?\s+", "", prev, flags=re.I).strip()
                     break
-            value = re.search(r"\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?", line, re.I)
+            value = re.search(r"[-+]?<?\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?", line, re.I)
             if name and value:
                 protocols.append(f"{name}: {value.group(0)}")
         if len(protocols) >= 5:
@@ -705,6 +711,11 @@ def format_jupiter_item(text: str, address: str | None = None) -> list[str]:
         ]
     return out or useful_lines(text, limit=6)
 
+
+def jupiter_has_readable_net_worth(text: str) -> bool:
+    return any(line.startswith('net worth:') for line in format_jupiter_item(text))
+
+
 def split_named_money_rows(text: str) -> list[tuple[str, float, str]]:
     rows: list[tuple[str, float, str]] = []
     for part in re.split(r";\s*", text):
@@ -713,8 +724,8 @@ def split_named_money_rows(text: str) -> list[tuple[str, float, str]]:
         name, raw = [x.strip() for x in part.split(':', 1)]
         # DeBank accessibility text can merge the previous value into the next name:
         # "$216.98 Hyperliquid: $97". Keep the human protocol/token name only.
-        name = re.sub(r"^<?\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?\s+", "", name, flags=re.I).strip()
-        m = re.search(r"\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?", raw, re.I)
+        name = re.sub(r"^[-+]?<?\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?\s+", "", name, flags=re.I).strip()
+        m = re.search(r"[-+]?<?\$[0-9][0-9,]*(?:\.[0-9]+)?[KMB]?", raw, re.I)
         if name and m:
             rows.append((name, money_value(m.group(0)), m.group(0)))
     return rows
@@ -901,6 +912,13 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
         try:
             if entry["kind"] == "sol":
                 title, text = await open_solana_chromium_text(entry["address"], args.wait)
+                if not jupiter_has_readable_net_worth(text):
+                    # Jupiter can render the application shell before portfolio rows are
+                    # available in DOM text. Retry once with a fresh, longer Chromium read
+                    # before excluding Solana/Jupiter from the aggregate report.
+                    title_retry, text_retry = await open_solana_chromium_text(entry["address"], max(args.wait * 2, args.wait + 15, 30))
+                    if jupiter_has_readable_net_worth(text_retry) or len(text_retry) > len(text):
+                        title, text = title_retry, text_retry
                 if os.environ.get("PORTFOLIO_DEBUG_DUMP_SOL"):
                     Path(os.environ["PORTFOLIO_DEBUG_DUMP_SOL"]).write_text(text, encoding="utf-8")
             else:

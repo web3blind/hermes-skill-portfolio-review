@@ -20,10 +20,11 @@ Use when the weekly portfolio informer sends a strange or low-value message (for
    - per-wallet share percentage;
    - per-wallet total/change, chain allocation, top tokens, DeFi/protocols;
    - short assessment and recommendations after the facts.
-6. Do not treat Jupiter marketing/login/human-verification text or an empty DOM as portfolio data. For the automated weekly informer, do **not** send a native-SOL RPC fallback as if it were the Solana portfolio; that misses Jupiter-visible DeFi/staked/claimable positions. Prefer the dedicated Chromium+xvfb Jupiter path, and if it cannot read `Net Worth`, say Solana/Jupiter could not be verified.
+6. Do not treat Jupiter marketing/login/human-verification text or an empty DOM as portfolio data. For the automated weekly informer, do **not** send a native-SOL RPC fallback as if it were the Solana portfolio; that misses Jupiter-visible DeFi/staked/claimable positions. Prefer the dedicated Chromium+xvfb Jupiter path, and if it cannot read `Net Worth`, retry once with a longer fresh Chromium read before marking Solana/Jupiter missing.
 7. Increase page wait time when browser-visible DeBank/Jupiter data is incomplete; 5 seconds is often too short, 15 seconds was a better default in this case.
-8. Watch Camofox tab accumulation for the weekly informer group. If tab creation fails or Camofox has many stale `weekly-informer` tabs, close the group and retry rather than degrading the report.
-9. Validate with `python3 -m py_compile <script>` and a dry-run before letting the scheduled cron deliver.
+8. Preserve negative money signs in parser cleanup. Do not strip a leading `-` from lines like `-$44.99`; only strip list bullets with `^-\s+`, otherwise PnL and period changes become falsely positive.
+9. Watch Camofox tab accumulation for the weekly informer group. If tab creation fails or Camofox has many stale `weekly-informer` tabs, close the group and retry rather than degrading the report.
+10. Validate with `python3 -m py_compile <script>` and a dry-run before letting the scheduled cron deliver.
 
 ## Privacy rule
 
