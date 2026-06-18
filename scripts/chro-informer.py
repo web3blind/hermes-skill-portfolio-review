@@ -121,8 +121,8 @@ def close_camofox_portfolio_group() -> None:
         pass
 
 def ensure_chro() -> None:
-    # Hermes migration: the legacy agent /chro manager is gone. Use the already-running
-    # Hermes Camofox service instead. It exposes legacy agent-compatible snapshot APIs.
+    # Use the already-running Hermes Camofox service. It exposes a browser
+    # snapshot API suitable for this skill's browser-first informer.
     health = fetch_json("/health", timeout=5)
     if not health.get("ok") or not health.get("running"):
         raise RuntimeError(f"Camofox service is not healthy: {health}")
@@ -146,7 +146,7 @@ def create_tab(url: str) -> dict[str, Any]:
             raise
         except Exception as exc:
             last_exc = exc
-            # Fallback to the documented legacy agent-compatible endpoint.
+            # Fallback to an alternate compatible tab-open endpoint.
             try:
                 return post_json("/tabs/open", {"userId": CAMOFOX_USER_ID, "url": url}, timeout=45)
             except urllib.error.HTTPError as fallback_exc:
@@ -188,6 +188,28 @@ async def open_and_text(url: str, wait_seconds: int) -> tuple[str, str]:
         if m:
             title = m.group(1)
             break
+    return title, text
+
+
+def debank_snapshot_looks_false_empty(text: str) -> bool:
+    lines = clean_lines(text)
+    return bool(lines) and any('No assets yet' in line for line in lines) and not summarize_debank_item(text).get('total')
+
+
+async def open_debank_text(url: str, wait_seconds: int) -> tuple[str, str]:
+    """Read DeBank, retrying false-empty accessibility snapshots.
+
+    Camofox/DeBank can occasionally return a shell that says "No assets yet"
+    for non-empty wallets when reusing a stale weekly-informer tab group. A fresh
+    tab group immediately reads the same wallet correctly, so treat no-total +
+    "No assets yet" as degraded browser state and retry once from a clean group.
+    """
+    global _PORTFOLIO_TAB_ID
+    title, text = await open_and_text(url, wait_seconds)
+    if debank_snapshot_looks_false_empty(text):
+        close_camofox_portfolio_group()
+        _PORTFOLIO_TAB_ID = None
+        title, text = await open_and_text(url, max(wait_seconds + 10, 25))
     return title, text
 
 
@@ -743,7 +765,12 @@ def unique_named_rows(rows: list[tuple[str, float, str]]) -> list[tuple[str, flo
     return out
 
 
-def generate_action_recommendations(items: list[dict[str, Any]], totals: list[tuple[str, float, str]], known_total: float) -> list[str]:
+def generate_action_recommendations(
+    items: list[dict[str, Any]],
+    totals: list[tuple[str, float, str]],
+    known_total: float,
+    totals_complete: bool = True,
+) -> list[str]:
     actions: list[str] = []
     if not known_total:
         return [
@@ -751,13 +778,17 @@ def generate_action_recommendations(items: list[dict[str, Any]], totals: list[tu
             "- после восстановления проверить, не скрыты ли DeFi/staked/claimable позиции за browser verification",
         ]
 
-    top_wallet = max(totals, key=lambda x: x[1]) if totals else None
-    if top_wallet:
-        top_pct = top_wallet[1] / known_total * 100
-        if top_pct >= 70:
-            actions.append(f"- проверить концентрацию: {top_wallet[0]} занимает {top_pct:.1f}% портфеля; если это не целевой основной счёт/стратегия, задать лимит и план снижения")
-        elif top_pct >= 55:
-            actions.append(f"- держать под наблюдением концентрацию: крупнейший кошелёк {top_wallet[0]} = {top_pct:.1f}%; это ещё терпимо, но нужен понятный тезис")
+    if not totals_complete:
+        missing = max(0, len(items) - len(totals))
+        actions.append(f"- сначала восстановить общий учёт: {missing} источн. без читаемого net worth, поэтому проценты портфеля и концентрацию сейчас не считаю")
+    else:
+        top_wallet = max(totals, key=lambda x: x[1]) if totals else None
+        if top_wallet:
+            top_pct = top_wallet[1] / known_total * 100
+            if top_pct >= 70:
+                actions.append(f"- проверить концентрацию: {top_wallet[0]} занимает {top_pct:.1f}% портфеля; если это не целевой основной счёт/стратегия, задать лимит и план снижения")
+            elif top_pct >= 55:
+                actions.append(f"- держать под наблюдением концентрацию: крупнейший кошелёк {top_wallet[0]} = {top_pct:.1f}%; это ещё терпимо, но нужен понятный тезис")
 
     protocol_rows: list[tuple[str, float, str]] = []
     token_rows: list[tuple[str, float, str]] = []
@@ -798,9 +829,12 @@ def generate_action_recommendations(items: list[dict[str, Any]], totals: list[tu
     top_protocols = unique_named_rows(sorted([row for row in protocol_rows if row[0].upper() not in protocol_token_symbols], key=lambda x: x[1], reverse=True))[:5]
     if top_protocols:
         biggest_name, biggest_value, biggest_raw = top_protocols[0]
-        biggest_pct = biggest_value / known_total * 100
-        if biggest_pct >= 20:
-            actions.append(f"- отдельно проверить главный риск-протокол: {biggest_name} = {biggest_raw} ({biggest_pct:.1f}% портфеля); тезис, риск смарт-контракта/биржи, условия выхода")
+        if totals_complete:
+            biggest_pct = biggest_value / known_total * 100
+            if biggest_pct >= 20:
+                actions.append(f"- отдельно проверить главный риск-протокол: {biggest_name} = {biggest_raw} ({biggest_pct:.1f}% портфеля); тезис, риск смарт-контракта/биржи, условия выхода")
+        elif biggest_value >= max(100, known_total * 0.20):
+            actions.append(f"- отдельно проверить крупный видимый риск-протокол: {biggest_name} = {biggest_raw}; долю не считаю, потому что общий портфель неполный")
         review = '; '.join(f"{name} {raw}" for name, _value, raw in top_protocols[:4])
         actions.append(f"- пройти DeFi/staked позиции по списку: {review}; для каждой оставить только если понятны доходность, локап и риск")
 
@@ -808,11 +842,14 @@ def generate_action_recommendations(items: list[dict[str, Any]], totals: list[tu
     stable_total = sum(v for _n, v, _raw in stable_like)
     liquid_total = sum(v for _n, v, _raw in liquid_rows) + stable_total
     if liquid_total:
-        liquid_pct = liquid_total / known_total * 100
-        if liquid_pct < 10:
-            actions.append(f"- ликвидная/стейбл-часть выглядит низкой: видно около {format_usd(liquid_total)} ({liquid_pct:.1f}%); решить, нужен ли буфер 10–20%")
-        elif liquid_pct > 35:
-            actions.append(f"- стейблы/ликвидная часть заметные: около {format_usd(liquid_total)} ({liquid_pct:.1f}%); если это не dry powder, определить куда и когда размещать")
+        if totals_complete:
+            liquid_pct = liquid_total / known_total * 100
+            if liquid_pct < 10:
+                actions.append(f"- ликвидная/стейбл-часть выглядит низкой: видно около {format_usd(liquid_total)} ({liquid_pct:.1f}%); решить, нужен ли буфер 10–20%")
+            elif liquid_pct > 35:
+                actions.append(f"- стейблы/ликвидная часть заметные: около {format_usd(liquid_total)} ({liquid_pct:.1f}%); если это не dry powder, определить куда и когда размещать")
+        elif liquid_total >= 50:
+            actions.append(f"- стейблы/ликвидная часть видны около {format_usd(liquid_total)}; долю не считаю, пока общий total неполный")
 
     top_chains = sorted(chain_rows, key=lambda x: x[1], reverse=True)[:3]
     if top_chains:
@@ -856,6 +893,7 @@ def build_message(items: list[dict[str, Any]], reason: str) -> str:
                     break
 
     known_total = sum(value for _, value, _ in totals)
+    totals_complete = bool(totals) and len(totals) == len(items)
     lines = ["Портфолио: browser-check через DeBank/Jupiter увидел изменение, стоит посмотреть.", ""]
     if reason == "bootstrap":
         lines[0] = "Портфолио: browser-check через DeBank/Jupiter инициализирован."
@@ -863,8 +901,11 @@ def build_message(items: list[dict[str, Any]], reason: str) -> str:
     if totals:
         lines.append(f"Итого по кошелькам, где удалось извлечь net worth: {format_usd(known_total)}")
         for label, value, raw in sorted(totals, key=lambda x: x[1], reverse=True):
-            pct = (value / known_total * 100) if known_total else 0
-            lines.append(f"- {label}: {raw} ({pct:.1f}%)")
+            if totals_complete:
+                pct = (value / known_total * 100) if known_total else 0
+                lines.append(f"- {label}: {raw} ({pct:.1f}%)")
+            else:
+                lines.append(f"- {label}: {raw}")
         if len(totals) < len(items):
             lines.append("- часть источников не дала читаемый net worth, поэтому общий итог неполный")
         lines.append("")
@@ -886,6 +927,8 @@ def build_message(items: list[dict[str, Any]], reason: str) -> str:
     concentration = (max((v for _, v, _ in totals), default=0) / known_total) if known_total else 0
     if not totals:
         assessment = "недостаточно данных: страницы открылись, но net worth не извлечён"
+    elif not totals_complete:
+        assessment = "часть net worth восстановилась, но общий итог всё ещё неполный; концентрацию и доли пока не считаю окончательными"
     elif concentration >= 0.75:
         assessment = "есть сильная концентрация в одном кошельке/сегменте; это не обязательно плохо, но требует осознанного тезиса"
     elif concentration >= 0.60:
@@ -897,13 +940,18 @@ def build_message(items: list[dict[str, Any]], reason: str) -> str:
         "Учёт: browser-visible DeBank/Jupiter остаются основой; RPC/native fallback не подменяет DeFi/staked/claimable данные, спорные строки надо держать audit-only.",
         f"Конкретные действия по всем {wallet_word}:",
     ])
-    lines.extend(generate_action_recommendations(items, totals, known_total))
+    lines.extend(generate_action_recommendations(items, totals, known_total, totals_complete=totals_complete))
     return "\n".join(lines).strip()
 
 
 async def main_async(args: argparse.Namespace) -> dict[str, Any]:
+    global _PORTFOLIO_TAB_ID
     state = read_json(args.state, {})
     ensure_chro()
+    # Start every informer run from a clean DeBank tab group. Stale Camofox tabs
+    # can show a false "No assets yet" shell for non-empty wallets.
+    close_camofox_portfolio_group()
+    _PORTFOLIO_TAB_ID = None
     entries = read_addresses()
     items: list[dict[str, Any]] = []
     errors: list[str] = []
@@ -913,16 +961,15 @@ async def main_async(args: argparse.Namespace) -> dict[str, Any]:
             if entry["kind"] == "sol":
                 title, text = await open_solana_chromium_text(entry["address"], args.wait)
                 if not jupiter_has_readable_net_worth(text):
-                    # Jupiter can render the application shell before portfolio rows are
-                    # available in DOM text. Retry once with a fresh, longer Chromium read
-                    # before excluding Solana/Jupiter from the aggregate report.
-                    title_retry, text_retry = await open_solana_chromium_text(entry["address"], max(args.wait * 2, args.wait + 15, 30))
-                    if jupiter_has_readable_net_worth(text_retry) or len(text_retry) > len(text):
-                        title, text = title_retry, text_retry
+                    # Jupiter often renders the shell first and portfolio data a bit later.
+                    # Do one longer fresh Chromium-profile read before declaring Solana
+                    # missing; the scheduled report should not degrade while jup.ag itself
+                    # can show the data.
+                    title, text = await open_solana_chromium_text(entry["address"], max(args.wait + 20, 35))
                 if os.environ.get("PORTFOLIO_DEBUG_DUMP_SOL"):
                     Path(os.environ["PORTFOLIO_DEBUG_DUMP_SOL"]).write_text(text, encoding="utf-8")
             else:
-                title, text = await open_and_text(url, args.wait)
+                title, text = await open_debank_text(url, args.wait)
             items.append({"kind": entry["kind"], "keyHash": short_hash(entry["key"]), "title": title, "text": text, "address": entry["address"]})
         except Exception as exc:
             errors.append(f"{entry['kind']}:{type(exc).__name__}")
