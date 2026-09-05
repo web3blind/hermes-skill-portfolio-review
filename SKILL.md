@@ -1,7 +1,7 @@
 ---
 name: portfolio-review
 description: Browser-first crypto portfolio review and weekly informer workflow using DeBank for EVM wallets and Jupiter Portfolio for Solana. Use when the user wants to review a crypto portfolio, inspect wallet allocation, compare visible DeFi/staked/claimable positions, or run a recurring portfolio informer without paid wallet APIs.
-version: "1.0.0"
+version: "1.1.0"
 author: web3blind / Hermes Agent
 license: MIT
 metadata:
@@ -32,6 +32,19 @@ Use this skill when the user wants to:
 7. Reconcile rows before trusting totals: protocol rows and their wallet-token wrappers must not both be counted; liabilities subtract from value; stale or disputed rows stay audit-only.
 8. Return a compact, actionable review: facts, issues, candidate actions, missing information, and 1–2 decisions for the next review cycle.
 9. For recurring jobs, store only privacy-safe state: hashes, timestamps, and decision metadata. Do not store raw wallet addresses, balances, token amounts, percentages, holdings, or page text.
+
+## Lightweight manual review
+
+When screenshots and brief notes already answer the question, review them directly before launching browser collection. Record visible facts, uncertainty, thesis changes, candidate actions, and missing data. A quick check should not automatically become a full multi-wallet investigation. Ask only for material missing inputs, such as the target allocation or comparison period.
+
+## Freshness and accounting checks
+
+- Confirm each browser tab shows the requested wallet before trusting its rows. A successful navigation call does not prove that the old wallet page has been replaced.
+- Before computing allocation percentages, verify the denominator covers the same wallets, chains, positions, and observation period as the numerator. Never present an incomplete subtotal as the whole portfolio.
+- Separate the source-reported total from the deduplicated reconciled subtotal. Unknown prices are unpriced, not zero; label partial coverage and avoid a precise total when a material component is unresolved.
+- Deposits between a wallet and its pool/vault are internal movements, not income. Count fees only when identifiable, subtract liabilities, and include claimable rewards only when not already reflected in NAV.
+- For yield wrappers and lending vaults, inspect underlying assets, curator/allocator authority, oracle and collateral risks, utilization, redemption terms, and actual exit liquidity. Displayed NAV or APR is not an executable exit quote.
+- Recommendations are not authorization to connect a wallet, approve, sign, trade, deposit, or withdraw.
 
 ## Local Configuration
 
